@@ -119,8 +119,10 @@ public final class MainActivity extends Activity {
                 }
             });
 
-    private final Runnable binderReceivedListener = () -> runOnUiThread(this::refreshShizukuStatus);
-    private final Runnable binderDeadListener = () -> runOnUiThread(this::refreshShizukuStatus);
+    private final Shizuku.OnBinderReceivedListener binderReceivedListener =
+            () -> runOnUiThread(this::refreshShizukuStatus);
+    private final Shizuku.OnBinderDeadListener binderDeadListener =
+            () -> runOnUiThread(this::refreshShizukuStatus);
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
