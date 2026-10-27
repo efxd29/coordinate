@@ -509,7 +509,7 @@ public final class MainActivity extends Activity {
         for (int i = 0; i < checks.size(); i++) {
             CheckResult result = checks.get(i);
             setPill(statePills[i], stateText(result.state), result.state);
-            valueLabels[i].setText("Current: " + result.current);
+            valueLabels[i].setText("Current: " + result.current + " · " + result.detail);
             valueLabels[i].setTextColor(result.state == STATE_OK ? GREEN : result.state == STATE_PARTIAL ? YELLOW : result.state == STATE_INACTIVE ? RED : MUTED);
             if (result.state == STATE_OK) {
                 matched++;
