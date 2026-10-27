@@ -42,4 +42,4 @@ On Android 11+, Shizuku can be started using Wireless debugging without root. Sh
 
 ## Build APK using GitHub Actions
 
-The workflow `.github/workflows/phantom-killer.yml` builds a debug APK from the `phantom-killer/` directory whenever files on the `phantom-killer-app` branch change. It uploads the file as the `phantom-killer-debug-apk` artifact. Download the artifact ZIP from the latest successful run in the repository's **Actions** tab, then extract and install `app-debug.apk`.
+The workflow `.github/workflows/phantom-killer.yml` uses Java 17, Android platform 35, and Gradle 8.11.1 to build a debug APK from the `phantom-killer/` directory whenever project files on the `phantom-killer-app` branch change. It uploads the file as the `phantom-killer-debug-apk` artifact. Download the artifact ZIP from the latest successful run in the repository's **Actions** tab, then extract and install `app-debug.apk`.
