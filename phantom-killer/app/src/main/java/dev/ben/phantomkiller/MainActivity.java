@@ -1,12 +1,14 @@
 package dev.ben.phantomkiller;
 
 import android.app.Activity;
+import android.content.ComponentName;
+import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
-import android.os.Build;
 import android.os.Bundle;
+import android.os.IBinder;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
@@ -63,7 +65,37 @@ public final class MainActivity extends Activity {
     private Button applyButton;
     private Button checkButton;
     private Runnable pendingPermissionAction;
+    private Shizuku.UserServiceArgs userServiceArgs;
+    private ICommandService commandService;
+    private Runnable pendingUserServiceAction;
+    private boolean userServiceBinding;
     private boolean busy;
+
+    private final ServiceConnection userServiceConnection = new ServiceConnection() {
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder service) {
+            ICommandService connected = ICommandService.Stub.asInterface(service);
+            runOnUiThread(() -> {
+                commandService = connected;
+                userServiceBinding = false;
+                refreshShizukuStatus();
+                Runnable action = pendingUserServiceAction;
+                pendingUserServiceAction = null;
+                if (action != null) {
+                    action.run();
+                }
+            });
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName name) {
+            runOnUiThread(() -> {
+                commandService = null;
+                userServiceBinding = false;
+                refreshShizukuStatus();
+            });
+        }
+    };
 
     private final Shizuku.OnRequestPermissionResultListener permissionListener =
             (requestCode, grantResult) -> runOnUiThread(() -> {
@@ -75,7 +107,7 @@ public final class MainActivity extends Activity {
                 refreshShizukuStatus();
                 if (grantResult == PackageManager.PERMISSION_GRANTED) {
                     if (action != null) {
-                        action.run();
+                        withUserService(action);
                     }
                 } else {
                     setOverall(
@@ -96,6 +128,14 @@ public final class MainActivity extends Activity {
         getWindow().setStatusBarColor(BG);
         getWindow().setNavigationBarColor(BG);
         buildUi();
+        userServiceArgs = new Shizuku.UserServiceArgs(
+                new ComponentName(this, ShellUserService.class)
+        )
+                .tag("phantom-killer-shell")
+                .processNameSuffix("shell")
+                .debuggable(BuildConfig.DEBUG)
+                .daemon(false)
+                .version(1);
 
         Shizuku.addRequestPermissionResultListener(permissionListener);
         Shizuku.addBinderReceivedListener(binderReceivedListener);
@@ -115,6 +155,13 @@ public final class MainActivity extends Activity {
         Shizuku.removeRequestPermissionResultListener(permissionListener);
         Shizuku.removeBinderReceivedListener(binderReceivedListener);
         Shizuku.removeBinderDeadListener(binderDeadListener);
+        if (userServiceArgs != null && (commandService != null || userServiceBinding)) {
+            try {
+                Shizuku.unbindUserService(userServiceArgs, userServiceConnection, true);
+            } catch (Throwable ignored) {
+                // Shizuku may already have stopped; no cleanup is needed in that case.
+            }
+        }
         worker.shutdownNow();
         super.onDestroy();
     }
@@ -298,7 +345,7 @@ public final class MainActivity extends Activity {
                 return;
             }
             if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
-                action.run();
+                withUserService(action);
             } else {
                 pendingPermissionAction = action;
                 setOverall("WAITING FOR SHIZUKU",
@@ -308,6 +355,31 @@ public final class MainActivity extends Activity {
         } catch (Throwable error) {
             setOverall("SHIZUKU ERROR",
                     safeMessage(error), STATE_ERROR);
+        }
+    }
+
+    private void withUserService(Runnable action) {
+        if (commandService != null) {
+            action.run();
+            return;
+        }
+
+        pendingUserServiceAction = action;
+        if (userServiceBinding) {
+            setOverall("CONNECTING USER SERVICE",
+                    "Waiting for Shizuku to start the privileged command service…", STATE_PARTIAL);
+            return;
+        }
+
+        userServiceBinding = true;
+        setOverall("CONNECTING USER SERVICE",
+                "Starting Shizuku's privileged command service…", STATE_PARTIAL);
+        try {
+            Shizuku.bindUserService(userServiceArgs, userServiceConnection);
+        } catch (Throwable error) {
+            userServiceBinding = false;
+            pendingUserServiceAction = null;
+            setOverall("USER SERVICE ERROR", safeMessage(error), STATE_ERROR);
         }
     }
 
@@ -475,32 +547,19 @@ public final class MainActivity extends Activity {
         }
     }
 
-    @SuppressWarnings("deprecation")
     private ShellResult runShell(String... command) throws Exception {
-        Process process = Shizuku.newProcess(command, null, null);
-        boolean ended = process.waitFor(12, TimeUnit.SECONDS);
-        if (!ended) {
-            process.destroy();
-            throw new IOException("Command timed out after 12 seconds");
+        ICommandService service = commandService;
+        if (service == null) {
+            throw new IOException("Shizuku UserService is not connected");
         }
-        String stdout = readAll(process.getInputStream());
-        String stderr = readAll(process.getErrorStream());
-        String combined = (stdout + "\n" + stderr).trim();
-        return new ShellResult(process.exitValue(), combined);
-    }
-
-    private String readAll(InputStream stream) throws IOException {
-        StringBuilder output = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (output.length() > 0) {
-                    output.append('\n');
-                }
-                output.append(line);
-            }
+        Bundle result = service.execute(command);
+        if (result == null) {
+            throw new IOException("Shizuku UserService returned no result");
         }
-        return output.toString().trim();
+        return new ShellResult(
+                result.getInt("exitCode", -1),
+                result.getString("output", "")
+        );
     }
 
     private void renderChecks(List<CheckResult> checks, boolean wasApply, int commandsExecuted, List<String> failures) {
